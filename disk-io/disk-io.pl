@@ -14,6 +14,7 @@ my %optctl = ();
 my($db, $username, $password);
 my ($help, $sysdba, $connectionMode, $localSysdba, $sysOper) = (0,0,0,0,0);
 my ($csvFile,$sleepSeconds,$iterations) = ('',60,1440);
+my $useTbsAsDisk = 0;
 
 Getopt::Long::GetOptions(
 	\%optctl,
@@ -23,6 +24,7 @@ Getopt::Long::GetOptions(
 	"csv-file=s" => \$csvFile,
 	"sleep-seconds=i"		=> \$sleepSeconds,
 	"iterations=i"			=> \$iterations,
+	"use-tbs-as-disk!"	=> \$useTbsAsDisk,
 	"sysdba!"				=> \$sysdba,
 	"local-sysdba!"=> \$localSysdba,
 	"sysoper!"				=> \$sysOper,
@@ -91,28 +93,36 @@ if ($localSysdba) {
 die "Connect to  $db failed \n" unless $dbh;
 $dbh->{RowCacheSize} = 100;
 
+my $diskSQL = q{substr(df.name, 1, instr(df.name,decode(instr(df.name,'/'),null,'\',0,'\','/'),1) -1) disk};
+
+if ($useTbsAsDisk) {
+	$diskSQL = q{ts.name disk};
+}
 
 my $sql=q{SELECT
-	to_char(sysdate,'yyyy-mm-dd hh24:mi:ss') snaptime
-	, substr(df.name, 1, instr(df.name,decode(instr(df.name,'/'),null,'\',0,'\','/'),1) -1) disk
-	, df.file#
-	, df.name
-	, fs.PHYRDS
-	, fs.PHYBLKRD
-	, fs.PHYWRTS
-	, fs.PHYBLKWRT
-	, fs.SINGLEBLKRDS
-	, fs.SINGLEBLKRDTIM
-	, fs.AVGIOTIM
-	, fs.READTIM
-	, fs.WRITETIM
-	, fs.MINIOTIM
-	, fs.MAXIORTM
-	, fs.MAXIOWTM
-	, round((fs.phyblkrd / decode(fs.phyblkwrt,0,1,fs.phyblkwrt)),2) rw_ratio
-	, global_name
-FROM V$DBFILE DF, V$FILESTAT FS, global_name g
-WHERE	DF.FILE#=FS.FILE#};
+   to_char(sysdate,'yyyy-mm-dd hh24:mi:ss') snaptime} . qq{\n, $diskSQL\n} . 
+	q{, df.file#
+   , df.name
+   , fs.PHYRDS
+   , fs.PHYBLKRD
+   , fs.PHYWRTS
+   , fs.PHYBLKWRT
+   , fs.SINGLEBLKRDS
+   , fs.SINGLEBLKRDTIM
+   , fs.AVGIOTIM
+   , fs.READTIM
+   , fs.WRITETIM
+   , fs.MINIOTIM
+   , fs.MAXIORTM
+   , fs.MAXIOWTM
+   , round((fs.phyblkrd / decode(fs.phyblkwrt,0,1,fs.phyblkwrt)),2) rw_ratio
+   , global_name
+from v$datafile df
+	, v$filestat fs
+	, global_name g
+	, v$tablespace ts
+where df.file#=fs.file#
+	and ts.ts# = df.ts#};
 
 my $sth = $dbh->prepare($sql,{ora_check_sql => 0});
 $sth->execute;
@@ -155,19 +165,20 @@ sub usage {
 
 usage: $basename
 
-  -database		  target instance
-  -username		  target instance account name
-  -password		  target instance account password
-  -csv-file      output file
-  -sleep-seconds sleep time between snapshots
-  -iterations	  number of snapshots to take
-  -sysdba		  logon as sysdba
-  -sysoper		  logon as sysoper
-  -local-sysdba  logon to local instance as sysdba. ORACLE_SID must be set
-					  the following options will be ignored:
-						 -database
-						 -username
-						 -password
+  -database		     target instance
+  -username		     target instance account name
+  -password		     target instance account password
+  -csv-file         output file
+  -sleep-seconds    sleep time between snapshots
+  -iterations	     number of snapshots to take
+  -use-tbs-as-disk  use tablespace name as disk name - the label will still be 'disk'
+  -sysdba		     logon as sysdba
+  -sysoper		     logon as sysoper
+  -local-sysdba     logon to local instance as sysdba. ORACLE_SID must be set
+					     the following options will be ignored:
+						   -database
+						   -username
+						   -password
 
   example:
 
